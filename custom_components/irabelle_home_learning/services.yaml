@@ -1,0 +1,177 @@
+learn:
+  fields:
+    utterances:
+      required: true
+      selector:
+        text:
+          multiple: true
+    intent:
+      required: true
+      selector:
+        text: {}
+    slots:
+      selector:
+        object: {}
+    response:
+      selector:
+        text:
+          multiline: true
+    note:
+      selector:
+        text: {}
+learn_intent:
+  fields:
+    name:
+      required: true
+      selector:
+        text: {}
+    template:
+      required: true
+      selector:
+        text:
+          multiline: true
+    utterances:
+      required: true
+      selector:
+        text:
+          multiple: true
+    description:
+      selector:
+        text: {}
+    slots:
+      selector:
+        object: {}
+    response:
+      selector:
+        text:
+          multiline: true
+    note:
+      selector:
+        text: {}
+forget:
+  fields:
+    utterance:
+      required: true
+      selector:
+        text: {}
+forget_intent:
+  fields:
+    name:
+      required: true
+      selector:
+        text: {}
+forget_all: {}
+observations:
+  fields:
+    state:
+      selector:
+        select:
+          options:
+          - new
+          - learned
+          - ignored
+route:
+  fields:
+    utterance:
+      required: true
+      selector:
+        text: {}
+    answer:
+      selector:
+        text: {}
+    targets:
+      selector:
+        text:
+          multiple: true
+judge:
+  fields:
+    state:
+      selector:
+        object: {}
+    questions:
+      selector:
+        object: {}
+review:
+  fields:
+    intent:
+      selector:
+        text: {}
+    apply:
+      selector:
+        boolean: {}
+audit: {}
+sweep: {}
+consolidate: {}
+duplicates: {}
+merge:
+  fields:
+    into:
+      required: true
+      selector:
+        text: {}
+    others:
+      required: true
+      selector:
+        text:
+          multiple: true
+    template:
+      selector:
+        text:
+          multiline: true
+    reply:
+      selector:
+        text:
+          multiline: true
+    phrasings:
+      selector:
+        text:
+          multiple: true
+combine:
+  fields:
+    intent:
+      selector:
+        text: {}
+    apply:
+      selector:
+        boolean: {}
+reconsider:
+  fields:
+    utterance:
+      selector:
+        text: {}
+set_response:
+  fields:
+    name:
+      required: true
+      selector:
+        text: {}
+    response:
+      required: true
+      selector:
+        text:
+          multiline: true
+rename_intent:
+  fields:
+    name:
+      required: true
+      selector:
+        text: {}
+    to:
+      required: true
+      selector:
+        text: {}
+export: {}
+validate: {}
+tools:
+  fields:
+    platform:
+      selector:
+        text: {}
+fold:
+  fields:
+    intent:
+      selector:
+        text: {}
+    apply:
+      selector:
+        boolean: {}

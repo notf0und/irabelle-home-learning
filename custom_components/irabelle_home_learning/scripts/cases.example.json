@@ -1,0 +1,157 @@
+{
+  "clean": {
+    "state": {
+      "request": "is the bedroom TV on",
+      "what_the_agent_answered_at_the_time": "The bedroom TV is off.",
+      "the_template_that_was_learned": "The bedroom TV is {{ 'on' if is_state('switch.bedroom_tv_virtual_switch', 'on') else 'off' }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "is the bedroom TV on",
+        "is the bedroom tv on",
+        "is the bedroom telly on",
+        "is the bedroom tv on or off",
+        "is the bedroom tv turned on"
+      ],
+      "the_entities_this_template_reads": {
+        "switch.bedroom_tv_virtual_switch": "off"
+      },
+      "the_time_where_the_house_is": "Sunday 8:14 PM UTC",
+      "what_the_template_says": {
+        "(nobody speaking)": "The bedroom TV is off.",
+        "Sam": "The bedroom TV is off.",
+        "Alex": "The bedroom TV is off."
+      }
+    },
+    "expect": "CLEAN"
+  },
+  "audit": {
+    "state": {
+      "request": "is the bedroom TV on; is the bedroom tv on; is the bedroom telly on; is the bedroom tv on or off; is the bedroom tv turned on",
+      "what_the_agent_answered_at_the_time": "(nothing recorded)",
+      "the_template_that_was_learned": "The bedroom TV is {{ 'on' if is_state('switch.bedroom_tv_virtual_switch', 'on') else 'off' }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "is the bedroom TV on",
+        "is the bedroom tv on",
+        "is the bedroom telly on",
+        "is the bedroom tv on or off",
+        "is the bedroom tv turned on"
+      ],
+      "the_entities_this_template_reads": {
+        "switch.bedroom_tv_virtual_switch": "off"
+      },
+      "the_time_where_the_house_is": "Sunday 8:14 PM UTC",
+      "what_the_template_says": {
+        "(nobody speaking)": "The bedroom TV is off.",
+        "Sam": "The bedroom TV is off.",
+        "Alex": "The bedroom TV is off."
+      }
+    },
+    "expect": "CLEAN"
+  },
+  "flagged_scope": {
+    "state": {
+      "request": "is the bedroom TV on",
+      "what_the_agent_answered_at_the_time": "The bedroom TV is off.",
+      "the_template_that_was_learned": "The bedroom TV is {{ 'on' if is_state('switch.bedroom_tv_virtual_switch', 'on') else 'off' }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "is the bedroom tv on",
+        "are the TV's on",
+        "are the tvs on",
+        "are the tvs on or off"
+      ],
+      "the_entities_this_template_reads": {
+        "switch.bedroom_tv_virtual_switch": "off"
+      },
+      "the_time_where_the_house_is": "Sunday 8:14 PM UTC",
+      "what_the_template_says": {
+        "(nobody speaking)": "The bedroom TV is off.",
+        "Sam": "The bedroom TV is off.",
+        "Alex": "The bedroom TV is off."
+      }
+    },
+    "expect": "FLAGGED"
+  },
+  "flagged_too_narrow": {
+    "state": {
+      "request": "are the tvs on",
+      "what_the_agent_answered_at_the_time": "The bedroom TV is off.",
+      "the_template_that_was_learned": "The bedroom TV is {{ 'on' if is_state('switch.bedroom_tv_virtual_switch', 'on') else 'off' }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "are the tvs on",
+        "are the tvs on or off"
+      ],
+      "the_entities_this_template_reads": {
+        "switch.bedroom_tv_virtual_switch": "off"
+      },
+      "the_time_where_the_house_is": "Sunday 8:14 PM UTC",
+      "what_the_template_says": {
+        "(nobody speaking)": "The bedroom TV is off.",
+        "Sam": "The bedroom TV is off.",
+        "Alex": "The bedroom TV is off."
+      }
+    },
+    "expect": "FLAGGED"
+  },
+  "flagged_time": {
+    "state": {
+      "request": "when did the bedroom tv turn on",
+      "what_the_agent_answered_at_the_time": "The bedroom TV was switched on at 5:37 AM.",
+      "the_template_that_was_learned": "The bedroom TV was switched on at {{ states.switch.bedroom_tv_virtual_switch.last_changed | strftime('%-I:%M %p') }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "when did the bedroom tv turn on",
+        "when was the bedroom tv switched on"
+      ],
+      "the_entities_this_template_reads": {
+        "switch.bedroom_tv_virtual_switch": "on"
+      },
+      "the_time_where_the_house_is": "Sunday 8:37 PM NZST",
+      "what_the_template_says": {
+        "(nobody speaking)": "The bedroom TV was switched on at 8:37 AM.",
+        "Sam": "The bedroom TV was switched on at 8:37 AM.",
+        "Alex": "The bedroom TV was switched on at 8:37 AM."
+      },
+      "the_answer_that_template_gives_right_now": "The bedroom TV was switched on at 8:37 AM."
+    },
+    "expect": "FLAGGED"
+  },
+  "flagged_missing": {
+    "state": {
+      "request": "where is the bedroom tv",
+      "what_the_agent_answered_at_the_time": "The bedroom TV is in the unknown.",
+      "the_template_that_was_learned": "The bedroom TV is in the {{ states('sensor.bedroom_tv_area_last_seen') }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "where is the bedroom tv"
+      ],
+      "the_entities_this_template_reads": {
+        "sensor.bedroom_tv_area_last_seen": "(has no state)"
+      },
+      "the_time_where_the_house_is": "Sunday 8:14 PM UTC",
+      "what_the_template_says": {
+        "(nobody speaking)": "The bedroom TV is in the unknown.",
+        "Sam": "The bedroom TV is in the unknown.",
+        "Alex": "The bedroom TV is in the unknown."
+      }
+    },
+    "expect": "FLAGGED"
+  },
+  "flagged_speaker": {
+    "state": {
+      "request": "where is my phone",
+      "what_the_agent_answered_at_the_time": "Sam's phone is in the Office.",
+      "the_template_that_was_learned": "Sam's phone is in the {{ states('sensor.sam_phone_area_last_seen') }}.",
+      "the_phrasings_this_intent_now_answers": [
+        "where is my phone",
+        "where is sam's phone"
+      ],
+      "the_entities_this_template_reads": {
+        "sensor.sam_phone_area_last_seen": "Office"
+      },
+      "the_time_where_the_house_is": "Sunday 8:14 PM UTC",
+      "what_the_template_says": {
+        "(nobody speaking)": "Sam's phone is in the Office.",
+        "Sam": "Sam's phone is in the Office.",
+        "Alex": "Sam's phone is in the Office."
+      }
+    },
+    "expect": "FLAGGED"
+  }
+}

@@ -1,0 +1,42 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1" # weekly: catch Home Assistant changes early
+
+jobs:
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install homeassistant
+      # The suite drives Home Assistant's own conversation stack (hassil, the bundled
+      # intents): install the versions this core release pins for it.
+      # Read the manifest as a file: importing the component would need hassil first.
+      - run: >-
+          pip install $(python -c "import json, pathlib, importlib.util as u;
+          root = pathlib.Path(u.find_spec('homeassistant').origin).parent;
+          print(' '.join(json.loads((root / 'components/conversation/manifest.json').read_text())['requirements']))")
+      - run: python custom_components/irabelle_home_learning/tests/run.py

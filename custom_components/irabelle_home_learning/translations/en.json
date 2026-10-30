@@ -1,0 +1,421 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Irabelle Home Learning",
+        "description": "The house teaches itself. Requests your voice assistant could not answer locally come back as sentences the local matcher answers from then on - in milliseconds, with no model call. Next you set up the first agent; add more any time from the integration page.",
+        "data": {
+          "language": "Language",
+          "export_path": "intent_script export file"
+        },
+        "data_description": {
+          "language": "The language learned sentences are written in (custom_sentences/LANGUAGE/), e.g. en.",
+          "export_path": "Optional. Where the export action writes intent_script stubs when configuration.yaml does not already say. Empty: {default_path}"
+        }
+      },
+      "agent": {
+        "title": "Agent",
+        "description": "An agent is what you pick as the **Conversation agent** of a voice assistant. It hands every sentence to the agent that really answers, returns that answer unchanged, and learns from the turn with two models. Add one agent per combination you want - for example \"Jev → DeepSeek\" and \"ChatGPT → DeepSeek\". Everything any agent learns is answered locally for all of them.",
+        "data": {
+          "name": "Name",
+          "delegate_agent": "Answering agent",
+          "judge": "Classification model",
+          "ai_task_entity": "Processing model"
+        },
+        "data_description": {
+          "name": "How this agent is listed in the voice assistant's conversation agent dropdown.",
+          "delegate_agent": "The agent that really answers. Its answer is returned unchanged.",
+          "judge": "Answers quick typed judgements on almost every miss: is this worth learning, which intent does it mean, is this answer right. Jev is built for this - fast and a fraction of a cent. Any other model works the same, slower. None learns by binding only.",
+          "ai_task_entity": "Writes and reviews the templates behind new answers - rare, larger calls. AI Task entities answer with structured output; conversation agents are asked for JSON."
+        }
+      },
+      "jev": {
+        "title": "Jev API",
+        "description": "Where the TypeSafe System One API lives, when it is called directly rather than through the Jev integration.",
+        "data": {
+          "jev_endpoint": "Endpoint",
+          "jev_model": "Model",
+          "jev_api_key": "API key (optional)"
+        },
+        "data_description": {
+          "jev_endpoint": "Leave as it is unless TypeSafe changes it.",
+          "jev_model": "jev-latest follows the current release; pin a version to keep thresholds meaningful.",
+          "jev_api_key": "Leave empty to use the key already configured for the Jev integration."
+        }
+      }
+    },
+    "error": {
+      "jev_not_installed": "The Jev integration is not installed. Pick another classification model, or Jev API."
+    },
+    "abort": {
+      "already_configured": "Irabelle Home Learning is already set up. Add another agent from its integration page instead."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Irabelle Home Learning",
+        "description": "Settings shared by every agent. The agents themselves - name, answering agent, models - are changed from the integration page (⋮ → Reconfigure).",
+        "data": {
+          "language": "Language",
+          "auto_learn": "Learn automatically",
+          "min_occurrences": "Times heard before learning",
+          "export_path": "intent_script export file"
+        },
+        "data_description": {
+          "language": "The language learned sentences are written in (custom_sentences/LANGUAGE/), e.g. en.",
+          "auto_learn": "When on, a request the local matcher missed is learned without anyone asking.",
+          "min_occurrences": "A phrasing said twice is one that will be said again. 1 learns everything immediately, at the cost of a model call per new request.",
+          "export_path": "Optional. Where the export action writes intent_script stubs when configuration.yaml does not already say. Empty: {default_path}"
+        }
+      }
+    }
+  },
+  "services": {
+    "learn": {
+      "name": "Learn phrasing",
+      "description": "Bind one or more utterances to an intent that already exists, so they are answered locally.",
+      "fields": {
+        "utterances": {
+          "name": "Utterances",
+          "description": "The exact phrases to learn."
+        },
+        "intent": {
+          "name": "Intent",
+          "description": "An intent that already exists."
+        },
+        "slots": {
+          "name": "Slots",
+          "description": "Optional slot values for the intent."
+        },
+        "response": {
+          "name": "Response",
+          "description": "Optional reply to say after the intent runs."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Why this was learned."
+        }
+      }
+    },
+    "learn_intent": {
+      "name": "Learn intent",
+      "description": "Create a new intent from a Jinja template plus the words people say.",
+      "fields": {
+        "name": {
+          "name": "Intent name",
+          "description": "Letters, digits and underscores."
+        },
+        "template": {
+          "name": "Template",
+          "description": "Jinja that renders the spoken answer."
+        },
+        "utterances": {
+          "name": "Utterances",
+          "description": "The phrases that trigger it."
+        },
+        "description": {
+          "name": "Description",
+          "description": "What this intent answers."
+        },
+        "slots": {
+          "name": "Slots",
+          "description": "The word lists the wording varies by, e.g. {day: [today, tomorrow]}."
+        },
+        "response": {
+          "name": "Response",
+          "description": "Optional reply text, if it differs from the template."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Why this was learned."
+        }
+      }
+    },
+    "forget": {
+      "name": "Forget phrasing",
+      "description": "Remove a phrase this integration previously learned.",
+      "fields": {
+        "utterance": {
+          "name": "Utterance",
+          "description": "The phrase to remove."
+        }
+      }
+    },
+    "forget_intent": {
+      "name": "Forget intent",
+      "description": "Remove an intent this integration learned, with its sentences.",
+      "fields": {
+        "name": {
+          "name": "Intent name",
+          "description": "The learned intent to remove."
+        }
+      }
+    },
+    "forget_all": {
+      "name": "Forget everything",
+      "description": "Remove every learned intent and every learned sentence file, leaving hand-written sentences untouched."
+    },
+    "observations": {
+      "name": "List observations",
+      "description": "What the house has heard that it could not answer locally, and what it decided to do about it.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "Only show rows in this state: new, learned or ignored."
+        }
+      }
+    },
+    "route": {
+      "name": "Route an utterance",
+      "description": "What the router would decide for one utterance, without learning anything.",
+      "fields": {
+        "utterance": {
+          "name": "Utterance",
+          "description": "The request to route."
+        },
+        "answer": {
+          "name": "Answer",
+          "description": "What the agent answered, if known."
+        },
+        "targets": {
+          "name": "Targets",
+          "description": "Entities the answer touched, if known."
+        }
+      }
+    },
+    "judge": {
+      "name": "Ask the classifier",
+      "description": "Ask the classification model typed questions directly. With no questions it reports its configuration and spend.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "What the questions are about: text or an object."
+        },
+        "questions": {
+          "name": "Questions",
+          "description": "Questions by id: {type: choice|noul|score, instructions, criteria}."
+        }
+      }
+    },
+    "review": {
+      "name": "Review learned answers",
+      "description": "Check what each learned intent will say. Reports by default; apply lets it fix.",
+      "fields": {
+        "intent": {
+          "name": "Intent",
+          "description": "Only review this learned intent. Omit to review all of them."
+        },
+        "apply": {
+          "name": "Apply",
+          "description": "Let the reviewer change what it finds wrong."
+        }
+      }
+    },
+    "audit": {
+      "name": "Audit one intent",
+      "description": "Re-judge the next installed intent in line, changing nothing."
+    },
+    "sweep": {
+      "name": "Sweep observations",
+      "description": "Mark recorded requests that are about the assistant rather than for the house."
+    },
+    "consolidate": {
+      "name": "Consolidate files",
+      "description": "Move every intent's sentences and reply into one file of its own."
+    },
+    "duplicates": {
+      "name": "Find duplicates",
+      "description": "Every entity read by more than one learned intent, and whether they are one question."
+    },
+    "merge": {
+      "name": "Merge intents",
+      "description": "Fold chosen intents into one.",
+      "fields": {
+        "into": {
+          "name": "Into",
+          "description": "The intent that remains."
+        },
+        "others": {
+          "name": "Others",
+          "description": "The intents folded into it."
+        },
+        "template": {
+          "name": "Template",
+          "description": "A new template for the merged intent."
+        },
+        "reply": {
+          "name": "Reply",
+          "description": "A new reply for the merged intent."
+        },
+        "phrasings": {
+          "name": "Phrasings",
+          "description": "Phrasings bound to built-in intents to reclaim."
+        }
+      }
+    },
+    "combine": {
+      "name": "Combine phrasings",
+      "description": "Fold the phrasings of an intent into one template per wording. Dry run unless apply is set.",
+      "fields": {
+        "intent": {
+          "name": "Intent",
+          "description": "Only this learned intent. Omit for all of them."
+        },
+        "apply": {
+          "name": "Apply",
+          "description": "Write the result."
+        }
+      }
+    },
+    "reconsider": {
+      "name": "Reconsider observations",
+      "description": "Ask the processing model to look again at what it passed over or refused.",
+      "fields": {
+        "utterance": {
+          "name": "Utterance",
+          "description": "Only reconsider this phrase. Omit to reconsider everything not learned."
+        }
+      }
+    },
+    "set_response": {
+      "name": "Set response",
+      "description": "Change what a learned intent says, without re-learning it.",
+      "fields": {
+        "name": {
+          "name": "Intent name",
+          "description": "The learned intent."
+        },
+        "response": {
+          "name": "Response",
+          "description": "The whole new reply."
+        }
+      }
+    },
+    "rename_intent": {
+      "name": "Rename intent",
+      "description": "Give a learned intent another name, and its file the matching one.",
+      "fields": {
+        "name": {
+          "name": "Intent name",
+          "description": "The learned intent."
+        },
+        "to": {
+          "name": "New name",
+          "description": "Letters, digits and underscores."
+        }
+      }
+    },
+    "export": {
+      "name": "Export intent_script",
+      "description": "Write intent_script stubs for every learned intent, so they keep answering if the integration is removed."
+    },
+    "validate": {
+      "name": "Validate sentence files",
+      "description": "Quarantine any sentence file that does not parse, then reload conversation."
+    },
+    "tools": {
+      "name": "List learner tools",
+      "description": "Diagnostics: which teaching tools a given platform can see.",
+      "fields": {
+        "platform": {
+          "name": "Platform",
+          "description": "The conversation platform to check."
+        }
+      }
+    },
+    "fold": {
+      "name": "Fold phrasings into templates",
+      "description": "Have the processing model write templates such as (press|toggle) [the] D2 keyboard for each group of learned phrasings, proved by the matcher and the classification model. Runs by itself after each learning; this runs it on demand. Dry run unless apply is set.",
+      "fields": {
+        "intent": {
+          "name": "Intent",
+          "description": "Only this intent's groups. Omit for all of them."
+        },
+        "apply": {
+          "name": "Apply",
+          "description": "Write the folds that pass every check."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "agent": {
+      "initiate_flow": {
+        "user": "Add agent",
+        "reconfigure": "Reconfigure agent"
+      },
+      "entry_type": "Agent",
+      "step": {
+        "user": {
+          "title": "Agent",
+          "description": "An agent is what you pick as the **Conversation agent** of a voice assistant. It hands every sentence to the agent that really answers, returns that answer unchanged, and learns from the turn with two models. Add one agent per combination you want - for example \"Jev → DeepSeek\" and \"ChatGPT → DeepSeek\". Everything any agent learns is answered locally for all of them.",
+          "data": {
+            "name": "Name",
+            "delegate_agent": "Answering agent",
+            "judge": "Classification model",
+            "ai_task_entity": "Processing model"
+          },
+          "data_description": {
+            "name": "How this agent is listed in the voice assistant's conversation agent dropdown.",
+            "delegate_agent": "The agent that really answers. Its answer is returned unchanged.",
+            "judge": "Answers quick typed judgements on almost every miss: is this worth learning, which intent does it mean, is this answer right. Jev is built for this - fast and a fraction of a cent. Any other model works the same, slower. None learns by binding only.",
+            "ai_task_entity": "Writes and reviews the templates behind new answers - rare, larger calls. AI Task entities answer with structured output; conversation agents are asked for JSON."
+          }
+        },
+        "agent": {
+          "title": "Agent",
+          "description": "An agent is what you pick as the **Conversation agent** of a voice assistant. It hands every sentence to the agent that really answers, returns that answer unchanged, and learns from the turn with two models. Add one agent per combination you want - for example \"Jev → DeepSeek\" and \"ChatGPT → DeepSeek\". Everything any agent learns is answered locally for all of them.",
+          "data": {
+            "name": "Name",
+            "delegate_agent": "Answering agent",
+            "judge": "Classification model",
+            "ai_task_entity": "Processing model"
+          },
+          "data_description": {
+            "name": "How this agent is listed in the voice assistant's conversation agent dropdown.",
+            "delegate_agent": "The agent that really answers. Its answer is returned unchanged.",
+            "judge": "Answers quick typed judgements on almost every miss: is this worth learning, which intent does it mean, is this answer right. Jev is built for this - fast and a fraction of a cent. Any other model works the same, slower. None learns by binding only.",
+            "ai_task_entity": "Writes and reviews the templates behind new answers - rare, larger calls. AI Task entities answer with structured output; conversation agents are asked for JSON."
+          }
+        },
+        "reconfigure": {
+          "title": "Agent",
+          "description": "An agent is what you pick as the **Conversation agent** of a voice assistant. It hands every sentence to the agent that really answers, returns that answer unchanged, and learns from the turn with two models. Add one agent per combination you want - for example \"Jev → DeepSeek\" and \"ChatGPT → DeepSeek\". Everything any agent learns is answered locally for all of them.",
+          "data": {
+            "name": "Name",
+            "delegate_agent": "Answering agent",
+            "judge": "Classification model",
+            "ai_task_entity": "Processing model"
+          },
+          "data_description": {
+            "name": "How this agent is listed in the voice assistant's conversation agent dropdown.",
+            "delegate_agent": "The agent that really answers. Its answer is returned unchanged.",
+            "judge": "Answers quick typed judgements on almost every miss: is this worth learning, which intent does it mean, is this answer right. Jev is built for this - fast and a fraction of a cent. Any other model works the same, slower. None learns by binding only.",
+            "ai_task_entity": "Writes and reviews the templates behind new answers - rare, larger calls. AI Task entities answer with structured output; conversation agents are asked for JSON."
+          }
+        },
+        "jev": {
+          "title": "Jev API",
+          "description": "Where the TypeSafe System One API lives, when it is called directly rather than through the Jev integration.",
+          "data": {
+            "jev_endpoint": "Endpoint",
+            "jev_model": "Model",
+            "jev_api_key": "API key (optional)"
+          },
+          "data_description": {
+            "jev_endpoint": "Leave as it is unless TypeSafe changes it.",
+            "jev_model": "jev-latest follows the current release; pin a version to keep thresholds meaningful.",
+            "jev_api_key": "Leave empty to use the key already configured for the Jev integration."
+          }
+        }
+      },
+      "error": {
+        "jev_not_installed": "The Jev integration is not installed. Pick another classification model, or Jev API."
+      },
+      "abort": {
+        "reconfigure_successful": "The agent was updated."
+      }
+    }
+  }
+}
