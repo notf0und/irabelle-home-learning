@@ -54,7 +54,7 @@ from .learner import (
     async_intent_names,
     async_learn,
     async_save,
-    async_sentence_index,
+    sentence_index,
     async_forget,
     entity_aliases,
     entity_label,
@@ -68,6 +68,7 @@ from .learner import (
     template_entities,
 )
 from .models import async_generate_data
+from .fileio import async_run
 from .judge import Choice, JudgeError, Noul, async_ask, has_judge
 from .upstream import reference
 from .observer import Turn
@@ -702,7 +703,7 @@ def _intent_examples(hass: HomeAssistant, language: str) -> dict[str, list[str]]
     binds instead of inventing a second intent that does the same job.
     """
     examples: dict[str, list[str]] = {}
-    for sentence, intent in async_sentence_index(hass, language).items():
+    for sentence, intent in sentence_index(hass, language).items():
         examples.setdefault(intent, []).append(sentence)
     return examples
 
@@ -718,7 +719,10 @@ def _intent_descriptions(hass: HomeAssistant) -> dict[str, str]:
 
 
 def _intent_catalogue(
-    hass: HomeAssistant, language: str, intents: list[Any] | None = None
+    hass: HomeAssistant,
+    language: str,
+    intents: list[Any] | None = None,
+    examples: dict[str, list[str]] | None = None,
 ) -> str:
     """Describe every intent a phrase could bind to, with example wordings.
 
@@ -728,7 +732,8 @@ def _intent_catalogue(
     "Tomorrow's weather will be cloudy, high 19" and decide to bind rather than write a
     second answer to the same question.
     """
-    examples = _intent_examples(hass, language)
+    if examples is None:
+        examples = _intent_examples(hass, language)
     described = _intent_descriptions(hass)
     learned = {spec.name: spec for spec in (intents or [])}
     lines: list[str] = []
@@ -809,7 +814,10 @@ async def _generalize(
         answer=(row.answer or "(nothing recorded)")[:1200],
         targets=", ".join(row.targets[:6]) or "(nothing recorded)",
         intents=_intent_catalogue(
-            hass, language_of(entry), entry.runtime_data.intents
+            hass,
+            language_of(entry),
+            entry.runtime_data.intents,
+            examples=await async_run(hass, _intent_examples, hass, language_of(entry)),
         ),
         entities=_exposed_entities(hass),
         attributes=_prompt_attributes(hass, row.utterance),
@@ -1237,6 +1245,7 @@ def _screen_state(
     *,
     utterance: str | None = None,
     answer: str = "",
+    phrasings: list[str] | None = None,
 ) -> dict[str, Any]:
     """The state the screen reads: what was asked, what was learned, what it now says.
 
@@ -1249,7 +1258,8 @@ def _screen_state(
     small judgement is noise: Jev answered 0.43 for "does this answer the request" on a
     template that answered it exactly.
     """
-    phrasings = learned_phrases(hass, language_of(entry)).get(spec.name, [])
+    if phrasings is None:
+        phrasings = learned_phrases(hass, language_of(entry)).get(spec.name, [])
     if row is not None:
         request, replied = row.utterance, row.answer
     else:
@@ -1362,7 +1372,16 @@ async def async_screen_learning(
     """
     if not has_judge(entry):
         return None
-    state = _screen_state(hass, entry, row, spec, utterance=utterance, answer=answer)
+    learned = await async_run(hass, learned_phrases, hass, language_of(entry))
+    state = _screen_state(
+        hass,
+        entry,
+        row,
+        spec,
+        utterance=utterance,
+        answer=answer,
+        phrasings=learned.get(spec.name, []),
+    )
     _LOGGER.debug("Irabelle Home Learning screen state for %s: %s", spec.name, json.dumps(state))
     try:
         answers = await async_ask(
@@ -1595,9 +1614,12 @@ def _route_state(hass: HomeAssistant, entry: ConfigEntry, row: Observation) -> d
     }
 
 
-def _intent_choice(hass: HomeAssistant, language: str) -> Choice:
+def _intent_choice(
+    hass: HomeAssistant, language: str, examples: dict[str, list[str]] | None = None
+) -> Choice:
     """One option per intent the house can answer, described by its own wordings."""
-    examples = _intent_examples(hass, language)
+    if examples is None:
+        examples = _intent_examples(hass, language)
     described = _intent_descriptions(hass)
     criteria: dict[str, str] = {}
     for name in sorted(set(described) | set(examples)):
@@ -1775,7 +1797,11 @@ async def async_route_learning(
             entry,
             state,
             {
-                "which_intent": _intent_choice(hass, language_of(entry)),
+                "which_intent": _intent_choice(
+                    hass,
+                    language_of(entry),
+                    await async_run(hass, _intent_examples, hass, language_of(entry)),
+                ),
                 "one_request": _one_request_question(),
                 "repeatable": Noul(
                     "Will `request` be said again, in these words or words close to "
@@ -2312,7 +2338,9 @@ async def async_review_learning(
             "screen": screen.as_dict() if screen is not None else None,
         }
 
-    phrasings = learned_phrases(hass, language_of(entry)).get(intent, [])
+    phrasings = (
+        await async_run(hass, learned_phrases, hass, language_of(entry))
+    ).get(intent, [])
     if not phrasings:
         # Nothing here for the text reviewer to rewrite. A binding to a built-in
         # intent has no phrasings of its own, and those are exactly the learnings
@@ -2595,7 +2623,8 @@ async def _consider_turn(
     # so a phrase that reaches here while the house already claims to answer it means the
     # local answer did not satisfy. That is the only negative signal a person gives
     # without being asked for one, and it used to be dropped on the floor.
-    if owner := async_sentence_index(hass, language_of(entry)).get(normalized):
+    index = await async_run(hass, sentence_index, hass, language_of(entry))
+    if owner := index.get(normalized):
         count = data.repeats.get(owner, 0) + 1
         data.repeats[owner] = count
         _LOGGER.info(
@@ -2830,7 +2859,7 @@ async def async_reconsider(
     handle for saying so without hand-editing a sentence file.
     """
     data: LearnerData = entry.runtime_data
-    index = async_sentence_index(hass, language_of(entry))
+    index = await async_run(hass, sentence_index, hass, language_of(entry))
 
     if utterance:
         wanted = normalize_sentence(utterance)

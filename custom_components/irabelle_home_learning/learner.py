@@ -33,6 +33,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 from homeassistant.util import yaml as yaml_util
 
+from .fileio import async_run
 from .upstream import bundled as upstream_bundle
 from .upstream import PROVIDED_SLOTS, expected_slots, slot_name
 from .const import (
@@ -844,10 +845,30 @@ async def async_prune_orphans(
     """
     known = await async_intent_names(hass)
     root = sentences_root(hass, language_of(entry))
+    removed, reported = await async_run(hass, _prune_files, root, known)
+
+    if removed:
+        _LOGGER.warning(
+            "Irabelle Home Learning removed %d sentence(s) for intents nothing answers, which would "
+            "have failed the whole pipeline: %s",
+            len(removed),
+            ", ".join(removed),
+        )
+    if reported:
+        _LOGGER.warning(
+            "Irabelle Home Learning found sentences for intents nothing answers in files it does not "
+            "own, so it left them alone. These fail the pipeline until they are fixed: %s",
+            ", ".join(reported),
+        )
+    return {"removed": removed, "reported": reported}
+
+
+def _prune_files(root: Path, known: set[str]) -> tuple[list[str], list[str]]:
+    """Remove our sentences for intents nothing answers. Returns (removed, reported)."""
     removed: list[str] = []
     reported: list[str] = []
     if not root.is_dir():
-        return {"removed": removed, "reported": reported}
+        return removed, reported
 
     ours: list[tuple[Path, dict[str, Any]]] = []
     declared: set[str] = set()
@@ -881,21 +902,7 @@ async def async_prune_orphans(
     for name in sorted(declared):
         if name not in known:
             reported.append(name)
-
-    if removed:
-        _LOGGER.warning(
-            "Irabelle Home Learning removed %d sentence(s) for intents nothing answers, which would "
-            "have failed the whole pipeline: %s",
-            len(removed),
-            ", ".join(removed),
-        )
-    if reported:
-        _LOGGER.warning(
-            "Irabelle Home Learning found sentences for intents nothing answers in files it does not "
-            "own, so it left them alone. These fail the pipeline until they are fixed: %s",
-            ", ".join(reported),
-        )
-    return {"removed": removed, "reported": reported}
+    return removed, reported
 
 
 #: One slot binding, exactly as this component writes it, so it can be recognised again. The
@@ -1011,7 +1018,7 @@ def file_templates(hass: HomeAssistant, language: str) -> dict[str, str]:
     return found
 
 
-def async_sentence_index(hass: HomeAssistant, language: str) -> dict[str, str]:
+def sentence_index(hass: HomeAssistant, language: str) -> dict[str, str]:
     """Map every existing utterance -> the intent it is bound to."""
     index: dict[str, str] = {}
     root = sentences_root(hass, language)
@@ -1032,7 +1039,7 @@ def async_sentence_index(hass: HomeAssistant, language: str) -> dict[str, str]:
     return index
 
 
-def async_quarantine_broken(hass: HomeAssistant, language: str) -> list[dict[str, Any]]:
+def quarantine_broken(hass: HomeAssistant, language: str) -> list[dict[str, Any]]:
     """Move aside any sentence file that does not parse.
 
     Returns the list of quarantined files, so the caller can surface it. This
@@ -1304,8 +1311,8 @@ async def async_load(hass: HomeAssistant, entry: ConfigEntry) -> LearnerData:
     # The text comes from the sentence file, not the store: a reply a person edited there is
     # the one the house says, and the store's copy of it is only what was written last time.
     # This is what makes the folder - not the storage file - the thing that survives.
-    replies = file_responses(hass, language_of(entry))
-    templates = file_templates(hass, language_of(entry))
+    replies = await async_run(hass, file_responses, hass, language_of(entry))
+    templates = await async_run(hass, file_templates, hass, language_of(entry))
     for spec in intents:
         if reply := replies.get(spec.name):
             # The reply IS the template unless the file says otherwise. A learned intent's
@@ -1422,7 +1429,7 @@ async def async_learn(
             seen.add(text.lower())
             cleaned.append(text)
 
-    index = async_sentence_index(hass, language)
+    index = await async_run(hass, sentence_index, hass, language)
     known = await async_intent_names(hass)
     _validate(cleaned, intent, index, known)
     if impossible := _values_the_intent_needs(
@@ -1474,7 +1481,9 @@ async def async_learn(
     # to keep, and it belongs to *that group*: two pinned groups of one intent carry different
     # values and must not share a reply.
     reply_key = _response_key(intent, slots) if (response and existing is None) else None
-    added = _merge_into_file(
+    added = await async_run(
+        hass,
+        _merge_into_file,
         path,
         intent,
         fresh,
@@ -1505,7 +1514,7 @@ async def async_learn(
             f"bound {len(added)} phrasing(s) to {intent}",
             file=relative,
         )
-        data.quarantined = async_quarantine_broken(hass, language)
+        data.quarantined = await async_run(hass, quarantine_broken, hass, language)
         await async_save(hass, entry)
         await hass.services.async_call("conversation", "reload", {}, blocking=True)
 
@@ -1647,8 +1656,25 @@ async def async_forget(hass: HomeAssistant, entry: ConfigEntry, utterance: str) 
     if not wanted:
         raise LearnerError("no utterance given")
 
+    removed = await async_run(
+        hass, _forget_in_files, sentences_root(hass, language_of(entry)), wanted
+    )
+
+    rows = [p for p in data.phrases if normalize_sentence(p.utterance) == wanted]
+    if not removed and not rows:
+        raise LearnerError(f"{utterance!r} was not learned by this integration")
+
+    data.phrases = [p for p in data.phrases if normalize_sentence(p.utterance) != wanted]
+    await async_save(hass, entry)
+    await hass.services.async_call("conversation", "reload", {}, blocking=True)
+    data.last_result = {"forgotten": utterance, "rows": len(rows), "files": removed}
+    async_dispatcher_send(hass, SIGNAL_UPDATED)
+    return data.last_result
+
+
+def _forget_in_files(root: Path, wanted: str) -> list[str]:
+    """Remove one normalised sentence from every file of ours. Returns the files touched."""
     removed: list[str] = []
-    root = sentences_root(hass, language_of(entry))
     for path in sorted(root.glob(f"{FILE_PREFIX}*.yaml")) if root.is_dir() else []:
         try:
             content = _load(path)
@@ -1676,14 +1702,4 @@ async def async_forget(hass: HomeAssistant, entry: ConfigEntry, utterance: str) 
             path.write_text(yaml_util.dump(content), encoding="utf-8")
         else:
             path.unlink(missing_ok=True)
-
-    rows = [p for p in data.phrases if normalize_sentence(p.utterance) == wanted]
-    if not removed and not rows:
-        raise LearnerError(f"{utterance!r} was not learned by this integration")
-
-    data.phrases = [p for p in data.phrases if normalize_sentence(p.utterance) != wanted]
-    await async_save(hass, entry)
-    await hass.services.async_call("conversation", "reload", {}, blocking=True)
-    data.last_result = {"forgotten": utterance, "rows": len(rows), "files": removed}
-    async_dispatcher_send(hass, SIGNAL_UPDATED)
-    return data.last_result
+    return removed

@@ -48,6 +48,9 @@ class StubConfigEntries:
     def async_entries(self, domain: str | None = None) -> list[Any]:
         return list(self.entries)
 
+    async def async_wait_initialized(self) -> None:
+        """Home Assistant 2026.11's entity registry waits for the entries on load."""
+
     async def async_unload_platforms(self, entry: Any, platforms: Any) -> bool:
         """The one platform call the unload path makes; a test world has no platforms."""
         return True

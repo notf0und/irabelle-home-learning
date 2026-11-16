@@ -38,6 +38,7 @@ from homeassistant.helpers.llm import (
 from homeassistant.util.json import JsonObjectType
 
 from .autolearn import async_change_response, async_review_learning
+from .fileio import async_run
 from .const import DOMAIN
 from .intents import (
     LearnedIntentHandler,
@@ -273,7 +274,7 @@ class ListIntentsTool(Tool):
 
         learned: dict[str, list[str]] = {}
         if entries := _entries(hass):
-            learned = learned_phrases(hass, language_of(entries[0]))
+            learned = await async_run(hass, learned_phrases, hass, language_of(entries[0]))
         if search:
             learned = {
                 intent: [phrase for phrase in phrases if search in phrase.lower()]
@@ -444,7 +445,9 @@ class GetIntentTool(Tool):
                 "the_reply_to_edit": source,
                 "says_right_now": _render(hass, source, sample)[:600],
                 "slots": spec.slots,
-                "phrasings": learned_phrases(hass, language_of(entries[0])).get(spec.name, []),
+                "phrasings": (
+                    await async_run(hass, learned_phrases, hass, language_of(entries[0]))
+                ).get(spec.name, []),
                 "reads": _reads(hass, source),
                 "warnings": missing_attributes(hass, source),
                 "file": spec.file,

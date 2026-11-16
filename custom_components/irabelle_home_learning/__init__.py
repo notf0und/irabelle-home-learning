@@ -47,6 +47,8 @@ from .combine import async_combine
 from .agents import SUBENTRY_AGENT
 from .const import AGENT_KEYS, CONF_ALLOWED_PLATFORMS, DOMAIN, SIGNAL_UPDATED
 from .conversation import delegate_agent
+from .fileio import async_run
+from .upstream import bundled as upstream_bundle
 from .judge import Answer, Choice, JudgeError, Noul, Score, async_ask, describe, has_judge
 from .intents import (
     async_duplicate_verdicts,
@@ -76,7 +78,7 @@ from .learner import (
     disarm_learner_files,
     async_load,
     async_prune_orphans,
-    async_quarantine_broken,
+    quarantine_broken,
     async_save,
     auto_learn,
     language_of,
@@ -197,7 +199,9 @@ def _async_register_services(hass: HomeAssistant) -> None:
         if entry is None:
             raise LearnerError("the Irabelle Home Learning integration is not set up")
         data: LearnerData = entry.runtime_data
-        data.quarantined = async_quarantine_broken(hass, language_of(entry))
+        data.quarantined = await async_run(
+            hass, quarantine_broken, hass, language_of(entry)
+        )
         await hass.services.async_call("conversation", "reload", {}, blocking=True)
         data.orphans = await async_prune_orphans(hass, entry)
         data.drift = await async_check_installed(hass, entry)
@@ -246,7 +250,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
         entry = _first_entry(hass)
         if entry is None:
             raise LearnerError("the Irabelle Home Learning integration is not set up")
-        return export_intent_script(hass, entry)
+        return await async_run(hass, export_intent_script, hass, entry)
 
     async def _duplicates(call: ServiceCall) -> dict[str, Any]:
         """Which learned intents read the same entity - and, with the judge, which are one question.
@@ -415,7 +419,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
         intents = [spec.name for spec in data.intents]
         for name in intents:
             await async_forget_intent(hass, entry, name)
-        files = purge_sentence_files(hass, language_of(entry))
+        files = await async_run(hass, purge_sentence_files, hass, language_of(entry))
         data.phrases = []
         data.observations = []
         data.last_result = {"forgotten_intents": intents, "files_removed": files}
@@ -745,13 +749,16 @@ async def _reload_sentences(hass: HomeAssistant) -> None:
 async def _async_setup_entry(hass: HomeAssistant, entry: HomeLearningConfigEntry) -> bool:
     data = await async_load(hass, entry)
     entry.runtime_data = data
+    # Home Assistant's own intents are read from disk once and cached; read them here, in the
+    # executor, rather than on the event loop the first time a phrase is learned.
+    await hass.async_add_executor_job(upstream_bundle, language_of(entry))
 
     # Validate before Home Assistant ever loads these sentences.
-    data.quarantined = async_quarantine_broken(hass, language_of(entry))
+    data.quarantined = await async_run(hass, quarantine_broken, hass, language_of(entry))
 
     # A sentence written with punctuation matches nothing, so any written before
     # that was understood is rewritten into its matchable form here.
-    normalize_sentence_files(hass, language_of(entry))
+    await async_run(hass, normalize_sentence_files, hass, language_of(entry))
 
     # Re-register every learned intent, so learned question types survive a restart.
     restore_intents(hass, data)
@@ -761,7 +768,11 @@ async def _async_setup_entry(hass: HomeAssistant, entry: HomeLearningConfigEntry
     # folder copied from another house - still gets its learnings back.
     language = language_of(entry)
     known = {spec.name for spec in data.intents}
-    adopted = [spec for spec in adopt_disarmed(hass, language) if spec.name not in known]
+    adopted = [
+        spec
+        for spec in await async_run(hass, adopt_disarmed, hass, language)
+        if spec.name not in known
+    ]
     if adopted:
         data.intents.extend(adopted)
         known.update(spec.name for spec in adopted)
@@ -777,7 +788,8 @@ async def _async_setup_entry(hass: HomeAssistant, entry: HomeLearningConfigEntry
     # intent is answered by Home Assistant itself, and leaving those aside because their name
     # is not in this integration's list took the air conditioner and monitor wordings out of
     # service for the length of a reload.
-    if arm_learner_files(hass, language, known | set(await async_intent_names(hass))):
+    handled = known | set(await async_intent_names(hass))
+    if await async_run(hass, arm_learner_files, hass, language, handled):
         await _reload_sentences(hass)
 
     # One file per intent, before anything looks for what is wrong: the same intent in
@@ -816,7 +828,13 @@ async def _async_setup_entry(hass: HomeAssistant, entry: HomeLearningConfigEntry
             # lost everything only this integration can put in it: measured on a restart,
             # "who am I" answered "I don't know who is asking" instead of naming the speaker.
             restore_intents(hass, data)
-            arm_learner_files(hass, language, set(await async_intent_names(hass)))
+            await async_run(
+                hass,
+                arm_learner_files,
+                hass,
+                language,
+                set(await async_intent_names(hass)),
+            )
             data.orphans = await async_prune_orphans(hass, entry)
             data.drift = await async_check_installed(hass, entry)
             # One save, so the spend and drift readings are in the store and visible
@@ -834,7 +852,7 @@ async def _async_setup_entry(hass: HomeAssistant, entry: HomeLearningConfigEntry
 
     # Put every reply in its sentence file the first time this runs, so the file shows
     # what the house will say rather than only the sentences that reach it.
-    if backfilled := backfill_responses(hass, entry):
+    if backfilled := await async_run(hass, backfill_responses, hass, entry):
         _LOGGER.info("Irabelle Home Learning wrote %d reply/replies into their sentence file(s)", backfilled)
 
     _async_register_services(hass)
@@ -909,8 +927,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: HomeLearningConfigEntry
         # reports an error for. Those files step aside instead - except the ones something
         # *else* still answers, which is what the `export` service writes an intent_script stub
         # for. `arm_learner_files` puts the rest back on the next setup.
-        if disarm_learner_files(
-            hass, language_of(entry), set(await async_intent_names(hass))
+        if await async_run(
+            hass,
+            disarm_learner_files,
+            hass,
+            language_of(entry),
+            set(await async_intent_names(hass)),
         ):
             await _reload_sentences(hass)
     return unloaded

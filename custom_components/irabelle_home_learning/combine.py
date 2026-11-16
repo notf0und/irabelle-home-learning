@@ -30,6 +30,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .intents import concrete, learner_sentences, replace_sentences, slot_sample
+from .fileio import async_run
 from .judge import JudgeError, Noul, async_ask, has_judge
 from .learner import (
     LearnerError,
@@ -385,11 +386,13 @@ async def async_combine(
     if intent is not None and not specs:
         raise LearnerError(f"{intent!r} is not a learned intent")
 
-    spoken = learner_sentences(hass, language, {spec.name for spec in specs})
+    spoken = await async_run(
+        hass, learner_sentences, hass, language, {spec.name for spec in specs}
+    )
     proposed: list[Candidate] = []
     pin_refused: list[dict[str, Any]] = []
     for spec in specs:
-        pins = pins_of(_intent_data(hass, spec)[0])
+        pins = pins_of((await async_run(hass, _intent_data, hass, spec))[0])
         for candidate in candidates(spec.name, spoken.get(spec.name) or []):
             # A pair that pins different values cannot become one line, and it must not be
             # allowed to *claim* its phrasings either: `group` takes each phrasing for the
@@ -429,7 +432,7 @@ async def async_combine(
     for index, fold in enumerate(folds):
         score = verdicts.get(f"c{index}", 0.0)
         spec = next(item for item in specs if item.name == fold.intent)
-        blocks, lists = _intent_data(hass, spec)
+        blocks, lists = await async_run(hass, _intent_data, hass, spec)
         pins = pins_of(blocks)
         wanted = {
             tuple(sorted(pins.get(normalize_sentence(source), {}).items()))
@@ -503,13 +506,22 @@ async def async_combine(
             key = tuple(sorted((item.get("pin") or {}).items()))
             by_pin.setdefault(key, []).append(item["into"])
         for key, lines in by_pin.items():
-            replace_sentences(path, spec.name, remove, lines, pin=dict(key))
+            await async_run(
+                hass, replace_sentences, path, spec.name, remove, lines, pin=dict(key)
+            )
         # The matcher caches what it read, so the fold is not in force until it re-reads the
         # directory - and the check below would be asking about the sentences that just left.
         await hass.services.async_call("conversation", "reload", {}, blocking=True)
         verdict = await async_verify(hass, language, sorted(remove), spec.name)
         if verdict == "unmatched":
-            replace_sentences(path, spec.name, {item["into"] for item in folded}, sorted(remove))
+            await async_run(
+                hass,
+                replace_sentences,
+                path,
+                spec.name,
+                {item["into"] for item in folded},
+                sorted(remove),
+            )
             await hass.services.async_call("conversation", "reload", {}, blocking=True)
             report["refused"].extend(
                 {"intent": spec.name, "merged": item["into"], "why": "the live matcher rejected it"}

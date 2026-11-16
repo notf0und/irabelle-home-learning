@@ -40,6 +40,7 @@ from .const import (
     SENTENCES_DIR,
     SIGNAL_UPDATED,
 )
+from .fileio import async_run
 from .judge import Choice, JudgeError, Noul, async_ask, has_judge
 from .registration import export_intent_script, refresh_export  # noqa: F401 - public here
 from .learner import (
@@ -54,7 +55,7 @@ from .learner import (
     _validate,
     async_intent_names,
     async_save,
-    async_sentence_index,
+    sentence_index,
     speaker_scope_problem,
     language_of,
     normalize_sentence,
@@ -616,7 +617,7 @@ async def async_learn_intent(
                 folded.append(written)
         cleaned = folded
 
-    index = async_sentence_index(hass, language)
+    index = await async_run(hass, sentence_index, hass, language)
     # A proposed variant may be wording the local matcher already answers (a
     # canonical phrasing like "who am I" usually is). Dropping it keeps the
     # never-shadow guarantee without throwing away the words the person
@@ -676,14 +677,14 @@ async def async_learn_intent(
     )
     path = Path(hass.config.path(relative))
     if fresh:
-        _write_sentences(path, name, fresh, lists=declared or None)
+        await async_run(hass, _write_sentences, path, name, fresh, lists=declared or None)
 
     # An explicit response survives a template correction; without one the reply is the
     # template and follows it.
     reply = (response or "").strip() or (
         previous.response if previous is not None and previous.response else None
     )
-    write_response(path, name, reply or template, template)
+    await async_run(hass, write_response, path, name, reply or template, template)
     spec = LearnedIntent(
         name=name,
         template=template,
@@ -767,8 +768,13 @@ async def async_update_template(
     register_intent(hass, updated)
     # The file keeps both halves: the reply as `default` and the computation as `template`
     # when the two differ, so a correction never loses the wording a person asked for.
-    write_response(
-        Path(hass.config.path(updated.file)), name, updated.response or template, template
+    await async_run(
+        hass,
+        write_response,
+        Path(hass.config.path(updated.file)),
+        name,
+        updated.response or template,
+        template,
     )
     await async_save(hass, entry)
     await hass.services.async_call("conversation", "reload", {}, blocking=True)
@@ -1087,8 +1093,12 @@ async def async_duplicate_verdicts(
     pairs = duplicate_pairs(report if report is not None else duplicate_report(hass, entry))
     if not pairs:
         return []
-    spoken = learner_sentences(
-        hass, language_of(entry), {item["intent"] for pair in pairs for item in pair}
+    spoken = await async_run(
+        hass,
+        learner_sentences,
+        hass,
+        language_of(entry),
+        {item["intent"] for pair in pairs for item in pair},
     )
     state = {
         "pairs": [
@@ -1165,7 +1175,65 @@ async def async_rename_intent(
         raise LearnerError(f"an intent called {to!r} already exists")
 
     relative = f"{SENTENCES_DIR}/{language}/{FILE_PREFIX}{slugify(to)}.yaml"
-    target_path = Path(hass.config.path(relative))
+    files = await async_run(
+        hass,
+        _rename_in_files,
+        sentences_root(hass, language),
+        Path(hass.config.path(relative)),
+        language,
+        name,
+        to,
+    )
+
+    renamed = LearnedIntent(
+        name=to,
+        template=spec.template,
+        response=spec.response,
+        description=spec.description,
+        note=spec.note,
+        source=spec.source,
+        slots=spec.slots,
+        learned_at=spec.learned_at,
+        file=relative,
+    )
+    # The phrase records follow the intent. They are the provenance of wording that is still
+    # installed, so they move rather than being removed with the old name.
+    for phrase in data.phrases:
+        if phrase.intent == name:
+            phrase.intent = to
+            phrase.file = relative
+    unregister_intent(hass, name)
+    data.intents = [item for item in data.intents if item.name != name] + [renamed]
+    register_intent(hass, renamed)
+    await async_save(hass, entry)
+    await hass.services.async_call("conversation", "reload", {}, blocking=True)
+    result = {
+        "renamed": name,
+        "to": to,
+        "file": relative,
+        "moved_from": files,
+        "verified": await async_verify(
+            hass,
+            language,
+            [
+                concrete(text, spec.slots)
+                for text in (
+                    await async_run(hass, learner_sentences, hass, language, {to})
+                ).get(to, [])[:3]
+            ],
+            to,
+        ),
+    }
+    data.last_result = result
+    async_dispatcher_send(hass, SIGNAL_UPDATED)
+    _LOGGER.warning("Irabelle Home Learning renamed %s to %s (%s)", name, to, relative)
+    return result
+
+
+def _rename_in_files(
+    root: Path, target_path: Path, language: str, name: str, to: str
+) -> list[str]:
+    """Move an intent's sentences, reply and lists to `to` in its new file. Returns the files."""
     target: dict[str, Any] = {"language": language, "intents": {}}
     if target_path.exists():
         try:
@@ -1174,7 +1242,6 @@ async def async_rename_intent(
             target = {"language": language, "intents": {}}
     target.setdefault("language", language)
 
-    root = sentences_root(hass, language)
     files: list[str] = []
     for path in sorted(root.glob(f"{FILE_PREFIX}*.yaml")):
         try:
@@ -1215,48 +1282,7 @@ async def async_rename_intent(
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(yaml_util.dump(target), encoding="utf-8")
-
-    renamed = LearnedIntent(
-        name=to,
-        template=spec.template,
-        response=spec.response,
-        description=spec.description,
-        note=spec.note,
-        source=spec.source,
-        slots=spec.slots,
-        learned_at=spec.learned_at,
-        file=relative,
-    )
-    # The phrase records follow the intent. They are the provenance of wording that is still
-    # installed, so they move rather than being removed with the old name.
-    for phrase in data.phrases:
-        if phrase.intent == name:
-            phrase.intent = to
-            phrase.file = relative
-    unregister_intent(hass, name)
-    data.intents = [item for item in data.intents if item.name != name] + [renamed]
-    register_intent(hass, renamed)
-    await async_save(hass, entry)
-    await hass.services.async_call("conversation", "reload", {}, blocking=True)
-    result = {
-        "renamed": name,
-        "to": to,
-        "file": relative,
-        "moved_from": files,
-        "verified": await async_verify(
-            hass,
-            language,
-            [
-                concrete(text, spec.slots)
-                for text in learner_sentences(hass, language, {to}).get(to, [])[:3]
-            ],
-            to,
-        ),
-    }
-    data.last_result = result
-    async_dispatcher_send(hass, SIGNAL_UPDATED)
-    _LOGGER.warning("Irabelle Home Learning renamed %s to %s (%s)", name, to, relative)
-    return result
+    return files
 
 
 async def async_merge_intents(
@@ -1300,8 +1326,8 @@ async def async_merge_intents(
     if slots is not None:
         target.slots = normalise_slots(slots) or None
 
-    harvested = learner_sentences(hass, language, set(doomed))
-    index = async_sentence_index(hass, language)
+    harvested = await async_run(hass, learner_sentences, hass, language, set(doomed))
+    index = await async_run(hass, sentence_index, hass, language)
     moved: list[str] = []
     skipped: list[dict[str, str]] = []
     for name in doomed:
@@ -1337,10 +1363,17 @@ async def async_merge_intents(
         await async_set_response(hass, entry, into, reply)
     target = next((spec for spec in data.intents if spec.name == into), target)
     if target.slots:
-        _write_lists(Path(hass.config.path(target.file)), target.slots)
+        await async_run(
+            hass, _write_lists, Path(hass.config.path(target.file)), target.slots
+        )
     if moved:
-        _write_sentences(
-            Path(hass.config.path(target.file)), into, moved, lists=target.slots
+        await async_run(
+            hass,
+            _write_sentences,
+            Path(hass.config.path(target.file)),
+            into,
+            moved,
+            lists=target.slots,
         )
         await hass.services.async_call("conversation", "reload", {}, blocking=True)
     for name in doomed:
@@ -1376,16 +1409,56 @@ async def async_consolidate_intents(
     """
     data: LearnerData = entry.runtime_data
     language = language_of(entry)
+    written, removed, files_by_intent, lists_by_intent = await async_run(
+        hass, _consolidate_files, hass, language
+    )
+
+    # The store's idea of where an intent lives has to follow the file.
+    moved = 0
+    for spec in data.intents:
+        if (relative := files_by_intent.get(spec.name)) and spec.file != relative:
+            spec.file = relative
+            moved += 1
+        # And what its sentences refer to has to match what the file declares, or the
+        # template checker would allow a `{day}` the matcher no longer knows.
+        if (declared := lists_by_intent.get(spec.name)) and spec.slots != declared:
+            spec.slots = declared
+            moved += 1
+    for phrase in data.phrases:
+        if (relative := files_by_intent.get(phrase.intent)) and phrase.file != relative:
+            phrase.file = relative
+    if moved:
+        await async_save(hass, entry)
+
+    if written or removed:
+        _LOGGER.warning(
+            "Irabelle Home Learning consolidated %d intent file(s) (%d written, %d removed): %s",
+            len(written) + len(removed),
+            len(written),
+            len(removed),
+            ", ".join(sorted(removed)) or "no files removed",
+        )
+    return {"written": sorted(written), "removed": sorted(removed)}
+
+
+def _consolidate_files(
+    hass: HomeAssistant, language: str
+) -> tuple[list[str], list[str], dict[str, str], dict[str, dict[str, Any]]]:
+    """Rewrite our sentence files one intent per file.
+
+    Returns the files written and removed, each intent's new file and its `lists:` block.
+    """
     root = sentences_root(hass, language)
     written: list[str] = []
     removed: list[str] = []
+    files_by_intent: dict[str, str] = {}
+    lists_by_intent: dict[str, dict[str, Any]] = {}
     if not root.is_dir():
-        return {"written": written, "removed": removed}
+        return written, removed, files_by_intent, lists_by_intent
 
     # Harvest every sentence and reply this integration wrote, grouped by intent.
     items: dict[str, list[Any]] = {}
     replies: dict[str, str] = {}
-    lists_by_intent: dict[str, dict[str, Any]] = {}
     sources: list[Path] = []
     seen: dict[str, set[str]] = {}
     for path in sorted(root.glob(f"{FILE_PREFIX}*.yaml")):
@@ -1423,7 +1496,6 @@ async def async_consolidate_intents(
 
     # Anything that ended up with no sentences at all is not an intent any more.
     planned: dict[Path, dict[str, Any]] = {}
-    files_by_intent: dict[str, str] = {}
     for name in sorted(items):
         if not items[name]:
             continue
@@ -1463,33 +1535,7 @@ async def async_consolidate_intents(
             removed.append(path.name)
         except OSError as err:  # pragma: no cover - filesystem trouble
             _LOGGER.error("Could not remove %s: %s", path, err)
-
-    # The store's idea of where an intent lives has to follow the file.
-    moved = 0
-    for spec in data.intents:
-        if (relative := files_by_intent.get(spec.name)) and spec.file != relative:
-            spec.file = relative
-            moved += 1
-        # And what its sentences refer to has to match what the file declares, or the
-        # template checker would allow a `{day}` the matcher no longer knows.
-        if (declared := lists_by_intent.get(spec.name)) and spec.slots != declared:
-            spec.slots = declared
-            moved += 1
-    for phrase in data.phrases:
-        if (relative := files_by_intent.get(phrase.intent)) and phrase.file != relative:
-            phrase.file = relative
-    if moved:
-        await async_save(hass, entry)
-
-    if written or removed:
-        _LOGGER.warning(
-            "Irabelle Home Learning consolidated %d intent file(s) (%d written, %d removed): %s",
-            len(written) + len(removed),
-            len(written),
-            len(removed),
-            ", ".join(sorted(removed)) or "no files removed",
-        )
-    return {"written": sorted(written), "removed": sorted(removed)}
+    return written, removed, files_by_intent, lists_by_intent
 
 
 def backfill_responses(hass: HomeAssistant, entry: ConfigEntry) -> int:
@@ -1540,7 +1586,7 @@ async def async_set_response(
     _check_template(hass, reply, defined=set(spec.slots or {}), sample=sample)
 
     path = Path(hass.config.path(spec.file))
-    write_response(path, name, reply, spec.template)
+    await async_run(hass, write_response, path, name, reply, spec.template)
     spec.response = reply
     register_intent(hass, spec)
     await async_save(hass, entry)
@@ -1716,7 +1762,9 @@ async def async_forget_intent(
     # Every file, not only the intent's own: a phrasing bound to it was written to
     # whichever file the binding went to, and a sentence whose intent no longer exists
     # fails the whole pipeline with "Unexpected error during intent recognition".
-    removed = remove_intent_sentences(hass, language_of(entry), name)
+    removed = await async_run(
+        hass, remove_intent_sentences, hass, language_of(entry), name
+    )
 
     data.intents = [s for s in data.intents if s.name != name]
     data.phrases = [p for p in data.phrases if p.intent != name]

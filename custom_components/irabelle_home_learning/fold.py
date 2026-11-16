@@ -46,6 +46,7 @@ from homeassistant.util import yaml as yaml_util
 
 from .const import FILE_PREFIX
 from .intents import concrete
+from .fileio import async_run
 from .judge import JudgeError, Noul, async_ask, has_judge
 from .learner import (
     LearnerError,
@@ -473,7 +474,9 @@ async def async_fold_group(
         return outcome
 
     added = added_sentences(group, proposal)
-    if (theft := steals(hass, language, group, proposal, added)) is not None:
+    if (
+        theft := await async_run(hass, steals, hass, language, group, proposal, added)
+    ) is not None:
         outcome.why = theft
         return outcome
 
@@ -486,11 +489,11 @@ async def async_fold_group(
     if not apply:
         return outcome
 
-    _write(group, proposal)
+    await async_run(hass, _write, group, proposal)
     await hass.services.async_call("conversation", "reload", {}, blocking=True)
     plain = [concrete(s, group.lists) for s in group.plain]
     if await async_verify(hass, language, plain, group.intent) == "unmatched":
-        _write(group, group.sentences)
+        await async_run(hass, _write, group, group.sentences)
         await hass.services.async_call("conversation", "reload", {}, blocking=True)
         outcome.why = "the live matcher rejected the folded lines; the originals are back"
         return outcome
@@ -520,7 +523,7 @@ async def async_fold(
     """
     language = language_of(entry)
     outcomes: list[Outcome] = []
-    for group in groups(hass, language, intent):
+    for group in await async_run(hass, groups, hass, language, intent):
         if only_ready:
             if not group.ready() or _ATTEMPTED.get(group.key) == group.fingerprint():
                 continue
